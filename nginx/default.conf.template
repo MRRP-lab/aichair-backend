@@ -1,0 +1,23 @@
+# front door for the stack: forwards every request to the API.
+# the nginx image fills in ${SERVER_NAME} from the environment when it starts.
+server {
+    listen 80;
+
+    # placeholder until we have a real domain (set in .env).
+    # this is the only server block, so it also answers requests for any other hostname
+    server_name ${SERVER_NAME};
+
+    location / {
+        # 127.0.0.11 is Docker's DNS. using a variable makes nginx look up "api" as
+        # requests come in, so it still finds the API after that container is recreated
+        resolver 127.0.0.11 valid=10s;
+        set $api_upstream http://api:8001;
+        proxy_pass $api_upstream;
+
+        # tell the API who originally asked
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}

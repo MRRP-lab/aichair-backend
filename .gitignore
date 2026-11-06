@@ -1,9 +1,18 @@
 # secrets
 .env
 
+# local only: survey data and the tools that load it
+data/
+scripts/
+tests/
+pytest.ini
+requirements-dev.txt
+docker-compose.override.yml
+
 # python
 .venv/
 __pycache__/
+.pytest_cache/
 
 # macOS
 .DS_Store
