@@ -1,131 +1,155 @@
 # aichair-backend
 
-backend for an accessibility-focused routing app in Bellingham, WA. it stores trail obstacles in
-PostGIS and serves them over a REST API.
+backend for collecting access barrier reports around Western Washington University, with a demo frontend for viewing and adding them
 
-```
-request -> nginx (port 80) -> api (FastAPI, port 8001) -> db (PostgreSQL + PostGIS)
-```
+## stack
+
+- FastAPI (REST API)
+- PostgreSQL + PostGIS (database)
+- nginx (serves frontend and forwards API requests)
+- React + Leaflet (frontend)
+- Docker Compose
 
 ## quick start
 
-you'll need Docker with the Compose plugin, and ports 80 and 8001 free.
+you'll need Docker with Compose, and ports 80 and 8001 free
 
 ```bash
 git clone https://github.com/ketchkai/aichair-backend.git
 cd aichair-backend
-cp .env.example .env    # then set POSTGRES_PASSWORD
+cp .env.example .env
+# set POSTGRES_PASSWORD in .env, letters and numbers only (openssl rand -hex 24)
 docker compose up --build -d
 curl http://localhost/health    # {"status":"ok"}
 ```
 
-the database starts empty, with the table defined in `db/schema.sql`. add obstacles with
-[`POST /obstacles`](#post-obstacles).
+then open `http://localhost` in a browser. on first start the database is created from `db/schema.sql`
+and loaded with 127 survey reports from `db/seed.sql`. these only run on an empty database, so after
+changing either one, reset with `docker compose down -v` and start again.
 
-## configuration
+**on a VM:** it only needs Docker and Git. follow quick start, then run `sudo systemctl enable docker` so stack comes back after a reboot. to update, `git pull` and
+`docker compose up --build -d`, which keeps the data. NO HTTPS or login yet, so don't open port
+80 to the internet.
 
-set these in `.env`, which is gitignored:
-
-| variable | what it is |
-|---|---|
-| `POSTGRES_USER`, `POSTGRES_DB` | database user and name |
-| `POSTGRES_PASSWORD` | letters and numbers only, `openssl rand -hex 24` makes a good one |
-| `SERVER_NAME` | domain nginx answers to, a placeholder for now |
-
-## common commands
-
-```bash
-docker compose logs -f api      # follow the API's logs
-docker compose up --build -d    # start, or rebuild after changing code
-docker compose down             # stop everything, keeps the data
-docker compose down -v          # stop everything and DELETE the database
-docker compose exec db sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB"'    # database shell
-```
-
-`db/schema.sql` only runs on an empty database. to apply a schema change, run `docker compose down -v`
-and start the stack again.
-
-## running on a VM
-
-the VM only needs Docker and Git.
-
-1. run the [quick start](#quick-start) steps, using a password that's only for the VM
-2. make sure Docker starts at boot, so the stack comes back after a reboot:
-   ```bash
-   sudo systemctl enable docker
-   ```
-
-to update it later, run `git pull` and then `docker compose up --build -d`. your data is kept.
-
-**before opening it up to the internet:** there's no HTTPS or login yet, so anyone who can reach port
-80 can read obstacles and add new ones.
-
-## troubleshooting
-
-| problem | fix |
-|---|---|
-| `port is already allocated` | something else is using port 80 or 8001. stop it, or change the left number under `ports` in `docker-compose.yml` |
-| `password authentication failed` in the API logs | `.env` doesn't match the password the database was created with. put the old one back, or reset with `docker compose down -v` |
-| nginx keeps restarting | check that `SERVER_NAME` is set in `.env`, then run `docker compose up -d nginx` |
-| `/health` returns `502` | nginx can't reach the API, check `docker compose logs api` |
-| `/health` returns `503` | the API can't reach the database, check `docker compose logs db` |
-
-## routing (disabled)
-
-`POST /route` was removed because the database only holds obstacle points, and routing needs a
-network of paths. the code is in git history (commit `e9a8f0e`), and `unweaver_stub/` is kept but
-isn't built or started.
+**working on the frontend:** with the stack running, `cd frontend && npm install && npm run dev` serves
+the app with hot reload at `http://localhost:5173`, talking to the API on port 8001. needs Node 22.
 
 ## endpoints
 
-all endpoints return JSON, with timestamps in UTC. interactive docs are at `http://localhost/docs`.
+all endpoints return JSON, with timestamps in UTC. Requests with a body must send
+`Content-Type: application/json`. coordinates outside the WWU bbox (`48.7240, -122.4935, 48.7430,
+-122.4740`) are rejected with `422`. interactive docs at `http://localhost/docs`.
 
-the obstacle types are `Obstacle`, `Confuser`, `Point of Interest`, `Seasonal` and `Other`. anything
-more specific goes in `tags`, which can hold any JSON object, except `global_id` is reserved for
-imported data.
+a report's `report_type` is one of `Obstacle`, `Confuser`, `Point of Interest`, `Seasonal` or `Other`.
+anything more specific goes in `tags`, which can hold any JSON object. `global_id` is reserved for
+survey data.
+
+| tag | values |
+|---|---|
+| `subtype` | e.g. `Pothole`, `Roots`, `Trail Intersection`, `Sign`, `Seating` |
+| `wheelchair_accessible` | `Yes` or `No` |
+| `why_not` | `Bumps`, `Obstacle in Path`, `Slope` or `Other` |
+| `ground_material` | `paved (asphalt)`, `gravel`, `natural ground (dirt)` or `other` |
+| `other_material` | free text, when `ground_material` is `other` |
+| `trail_width_m` | number, in meters |
+| `temporary` | `Yes` or `No` |
 
 ### GET /health
 
-returns `200` with `{"status":"ok"}`, or `503` if the database is unavailable.
+liveness check, which also checks the database. no request body.
 
-### GET /obstacles
+**Response 200**
+```json
+{ "status": "ok" }
+```
 
-lists obstacles, optionally filtered. returns `422` for invalid parameters, or if the box is entirely
-outside Bellingham.
+**Errors**
+- `503` — the database is unavailable
+
+**Example**
+```bash
+curl http://localhost/health
+```
+
+### GET /reports
+
+list reports, optionally filtered. no request body.
 
 | query parameter | what it does |
 |---|---|
-| `south`, `west`, `north`, `east` | bounding box, trimmed to Bellingham (`48.68, -122.55, 48.82, -122.35`) |
-| `obstacle_type` | only return this type |
+| `south`, `west`, `north`, `east` | only reports inside this box, trimmed to the WWU bbox |
+| `report_type` | only reports of this type |
 
-```bash
-curl "http://localhost/obstacles?obstacle_type=Obstacle"
-```
-
+**Response 200**
 ```json
 [
   {
     "id": 1,
     "osm_id": null,
-    "lat": 48.75,
-    "lon": -122.48,
-    "obstacle_type": "Obstacle",
-    "description": "pothole on the left side",
-    "created_at": "2026-05-23T19:42:00.123456Z",
-    "tags": { "subtype": "Pothole" },
+    "lat": 48.7359628,
+    "lon": -122.4815607,
+    "report_type": "Obstacle",
+    "description": "004",
+    "created_at": "2024-03-08T21:04:00Z",
+    "tags": {
+      "associated_segment_number": 1.0,
+      "global_id": "870d974e-7623-4b4c-9e07-70bb3346c881",
+      "ground_material": "paved (asphalt)",
+      "subtype": "Bushes",
+      "wheelchair_accessible": "Yes"
+    },
     "image_path": null
   }
 ]
 ```
 
-### POST /obstacles
+**Errors**
+- `422` — invalid parameters, or the box is entirely outside the WWU bbox
 
-adds an obstacle and returns `201` with the new row, in the same shape as above. `lat`, `lon` and
-`obstacle_type` are required. returns `422` for invalid input, including coordinates outside
-Bellingham.
-
+**Example**
 ```bash
-curl -X POST http://localhost/obstacles \
+curl "http://localhost/reports?report_type=Obstacle"
+```
+
+### GET /reports/{id}
+
+get one report. no request body.
+
+**Response 200** — one report, in the same shape as above
+
+**Errors**
+- `404` — no report with that id
+- `422` — the id isn't a positive whole number
+
+**Example**
+```bash
+curl http://localhost/reports/1
+```
+
+### POST /reports
+
+add a report. `lat`, `lon` and `report_type` are required.
+
+**Request body**
+```json
+{
+  "lat": 48.7330,
+  "lon": -122.4830,
+  "report_type": "Obstacle",
+  "description": "large root across the left half of the path",
+  "tags": { "subtype": "Roots", "wheelchair_accessible": "No", "why_not": "Obstacle in Path" }
+}
+```
+
+**Response 201** — the new report, in the same shape as `GET /reports`
+
+**Errors**
+- `422` — validation failure (coordinates outside the bbox, unknown type, missing fields, description
+  over 500 characters, `global_id` in tags)
+
+**Example**
+```bash
+curl -X POST http://localhost/reports \
   -H "Content-Type: application/json" \
-  -d '{"lat":48.75,"lon":-122.48,"obstacle_type":"Obstacle","description":"pothole on the left side","tags":{"subtype":"Pothole"}}'
+  -d '{"lat":48.733,"lon":-122.483,"report_type":"Obstacle","description":"large root across the left half of the path","tags":{"subtype":"Roots"}}'
 ```

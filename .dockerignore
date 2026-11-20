@@ -1,0 +1,10 @@
+# keeps secrets, survey data and build junk out of docker builds
+.env
+.git
+data/
+scripts/
+tests/
+docs/
+**/node_modules
+**/dist
+**/__pycache__
